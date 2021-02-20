@@ -2,11 +2,11 @@ package gormstart
 
 import (
 	"github.com/google/wire"
-	"github.com/jinzhu/gorm"
-	_ "github.com/jinzhu/gorm/dialects/mysql" // mysql driver
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 	"time"
 )
 
@@ -35,15 +35,20 @@ func NewOptions(v *viper.Viper) (*Options, error) {
 // New returns *gorm.DB that used for mysql operate
 func New(o *Options, logger *zap.Logger) (*gorm.DB, error) {
 	var err error
-	db, err := gorm.Open("mysql", o.URL)
+	db, err := gorm.Open(mysql.Open(o.URL), &gorm.Config{})
 	if err != nil {
 		return nil, errors.Wrap(err, "gorm open database connection error")
 	}
 
-	db.DB().SetMaxIdleConns(o.MaxIdle)
-	db.DB().SetMaxOpenConns(o.MaxOpen)
-	db.DB().SetConnMaxIdleTime(o.MaxIdleTime)
-	db.DB().SetConnMaxLifetime(o.MaxLifetime)
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, errors.Wrapf(err, "get sql db error")
+	}
+
+	sqlDB.SetMaxIdleConns(o.MaxIdle)
+	sqlDB.SetMaxOpenConns(o.MaxOpen)
+	sqlDB.SetConnMaxIdleTime(o.MaxIdleTime)
+	sqlDB.SetConnMaxLifetime(o.MaxLifetime)
 
 	if o.Debug {
 		db = db.Debug()
