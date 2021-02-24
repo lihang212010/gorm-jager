@@ -59,36 +59,64 @@ func New(o *Options, logger *zap.Logger, tracer opentracing.Tracer) (*gorm.DB, e
 		}
 
 		before := func(db *gorm.DB) {
+			// 先从父级spans生成子span ---> 这里命名为gorm，但实际上可以自定义
+			// 自己喜欢的operationName
+			opentracing.SetGlobalTracer(tracer)
+			span, _ := opentracing.StartSpanFromContext(db.Statement.Context, "gorm")
+
+			// 利用db实例去传递span
+			db.InstanceSet("__gorm_span", span)
+
+			return
 			//ctx := db.Statement.Context
 			//span := tracer.StartSpan("sql", opentracing.ChildOf(opentracing.SpanFromContext(ctx).Context()))
 		}
 
 		after := func(db *gorm.DB) {
-
+			// 从GORM的DB实例中取出span
+			_span, isExist := db.InstanceGet("__gorm_span")
+			if !isExist {
+				// 不存在就直接抛弃掉
+				return
+			}
+			// 断言进行类型转换
+			span, ok := _span.(opentracing.Span)
+			if !ok {
+				return
+			}
+			// <---- 一定一定一定要Finsih掉！！！
+			defer span.Finish()
+			// Error
+			if db.Error != nil {
+				//span.LogFields(tracerLog.Error(db.Error))
+			}
+			// sql --> 写法来源GORM V2的日志
+			//span.LogFields(tracerLog.String("sql", db.Dialector.Explain(db.Statement.SQL.String(), db.Statement.Vars...)))
+			return
 		}
 
-		if err := db.Callback().Create().Before("gorm:create").Register("trace:before", before); err != nil {
+		if err := idb.Callback().Create().Before("gorm:create").Register("trace:before", before); err != nil {
 			return errors.Wrap(err, "grom create callback register tracer:before error")
 		}
-		if err := db.Callback().Create().After("gorm:create").Register("trace:after", after); err != nil {
+		if err := idb.Callback().Create().After("gorm:create").Register("trace:after", after); err != nil {
 			return errors.Wrap(err, "grom create callback register tracer:after error")
 		}
-		if err := db.Callback().Query().Before("gorm:query").Register("trace:before", before); err != nil {
+		if err := idb.Callback().Query().Before("gorm:query").Register("trace:before", before); err != nil {
 			return errors.Wrap(err, "grom query callback register tracer:before error")
 		}
-		if err := db.Callback().Query().After("gorm:query").Register("trace:after", after); err != nil {
+		if err := idb.Callback().Query().After("gorm:query").Register("trace:after", after); err != nil {
 			return errors.Wrap(err, "grom query callback register tracer:after error")
 		}
-		if err := db.Callback().Delete().Before("gorm:delete").Register("trace:before", before); err != nil {
+		if err := idb.Callback().Delete().Before("gorm:delete").Register("trace:before", before); err != nil {
 			return errors.Wrap(err, "grom delete callback register tracer:before error")
 		}
-		if err := db.Callback().Delete().After("gorm:delete").Register("trace:after", after); err != nil {
+		if err := idb.Callback().Delete().After("gorm:delete").Register("trace:after", after); err != nil {
 			return errors.Wrap(err, "grom delete callback register tracer:after error")
 		}
-		if err := db.Callback().Update().Before("gorm:update").Register("trace:before", before); err != nil {
+		if err := idb.Callback().Update().Before("gorm:update").Register("trace:before", before); err != nil {
 			return errors.Wrap(err, "grom update callback register tracer:before error")
 		}
-		if err := db.Callback().Update().After("gorm:update").Register("trace:after", after); err != nil {
+		if err := idb.Callback().Update().After("gorm:update").Register("trace:after", after); err != nil {
 			return errors.Wrap(err, "grom update callback register tracer:after error")
 		}
 
