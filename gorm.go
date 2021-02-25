@@ -3,12 +3,14 @@ package gormstart
 import (
 	"github.com/google/wire"
 	"github.com/opentracing/opentracing-go"
+	tracerLog "github.com/opentracing/opentracing-go/log"
 	"github.com/pkg/errors"
 	"go.didapinche.com/agollo/v2"
 	"go.didapinche.com/boot"
 	"go.uber.org/zap"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"strings"
 	"time"
 )
 
@@ -61,6 +63,7 @@ func New(o *Options, logger *zap.Logger, tracer opentracing.Tracer) (*gorm.DB, e
 		before := func(db *gorm.DB) {
 			// 先从父级spans生成子span ---> 这里命名为gorm，但实际上可以自定义
 			// 自己喜欢的operationName
+
 			opentracing.SetGlobalTracer(tracer)
 			span, _ := opentracing.StartSpanFromContext(db.Statement.Context, "gorm")
 
@@ -84,13 +87,14 @@ func New(o *Options, logger *zap.Logger, tracer opentracing.Tracer) (*gorm.DB, e
 			if !ok {
 				return
 			}
-			// <---- 一定一定一定要Finsih掉！！！
+			operate := strings.Split(db.Statement.SQL.String(), " ")
+
+			span.SetOperationName(operate[0])
+			span.SetTag("sql", db.Statement.SQL.String())
 			defer span.Finish()
-			// Error
 			if db.Error != nil {
-				//span.LogFields(tracerLog.Error(db.Error))
+				span.LogFields(tracerLog.Error(db.Error))
 			}
-			// sql --> 写法来源GORM V2的日志
 			//span.LogFields(tracerLog.String("sql", db.Dialector.Explain(db.Statement.SQL.String(), db.Statement.Vars...)))
 			return
 		}
@@ -118,6 +122,12 @@ func New(o *Options, logger *zap.Logger, tracer opentracing.Tracer) (*gorm.DB, e
 		}
 		if err := idb.Callback().Update().After("gorm:update").Register("trace:after", after); err != nil {
 			return errors.Wrap(err, "grom update callback register tracer:after error")
+		}
+		if err := idb.Callback().Raw().Before("gorm:raw").Register("trace:before", before); err != nil {
+			return errors.Wrap(err, "grom raw callback register tracer:before error")
+		}
+		if err := idb.Callback().Raw().After("gorm:raw").Register("trace:after", after); err != nil {
+			return errors.Wrap(err, "grom raw callback register tracer:after error")
 		}
 
 		if db != nil {
